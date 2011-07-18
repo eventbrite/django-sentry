@@ -6,7 +6,7 @@ from sentry.client.models import get_client
 import os
 import time
 
-SENTRY_WAIT_SECONDS = 10 
+SENTRY_WAIT_SECONDS = 3
 
 class AsyncSentryClient(SentryClient):
     """This client uses a single background thread to dispatch errors."""
@@ -59,7 +59,7 @@ def main_thread_terminated():
     if isinstance(client, AsyncSentryClient):
         size = client.queue.qsize()
         if size:
-            print "Sentry attempts to send %s error messages" % size
+            print "Sentry attempting to send %s error messages" % size
             print "Waiting up to %s seconds" % SENTRY_WAIT_SECONDS
             if os.name == 'nt':
                 print "Press Ctrl-Break to quit"
