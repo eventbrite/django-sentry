@@ -188,11 +188,7 @@ class SentryClient(object):
 
     def send_remote(self, url, data, headers={}):
         req = urllib2.Request(url, headers=headers)
-        try:
-            response = urllib2.urlopen(req, data, settings.REMOTE_TIMEOUT).read()
-        except:
-            response = urllib2.urlopen(req, data).read()
-        return response
+        return urllib2.urlopen(req, data, settings.REMOTE_TIMEOUT).read()
 
     def send(self, **kwargs):
         "Sends the message to the server."
