@@ -14,6 +14,8 @@ from django.core.cache import cache
 from django.template import TemplateSyntaxError
 from django.template.loader import LoaderOrigin
 from django.views.debug import ExceptionReporter
+from common.utils.redact import redact_query_dict, redact_cookies, redact_meta, redact_uri
+
 
 import sentry
 from sentry.conf import settings
@@ -97,14 +99,14 @@ class SentryClient(object):
                 post_data = request.POST
 
             kwargs['data'].update(dict(
-                META=request.META,
-                POST=post_data,
-                GET=request.GET,
-                COOKIES=request.COOKIES,
+                META=redact_meta(request.META),
+                POST=redact_query_dict(post_data),
+                GET=redact_query_dict(request.GET),
+                COOKIES=redact_cookies(request.COOKIES),
             ))
 
             if not kwargs.get('url'):
-                kwargs['url'] = request.build_absolute_uri()
+                kwargs['url'] = redact_uri(request.build_absolute_uri())
 
         kwargs.setdefault('level', logging.ERROR)
         kwargs.setdefault('server_name', settings.NAME)
@@ -335,7 +337,7 @@ class SentryClient(object):
             traceback=tb_message,
             data=data,
             **kwargs
-        )
+            )
 
 class DummyClient(SentryClient):
     "Sends messages into an empty void"
