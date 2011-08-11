@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import sys
+
 try:
     from setuptools import setup, find_packages, Command
 except ImportError:
@@ -31,15 +33,15 @@ install_requires = [
     'django-templatetag-sugar>=0.1.0',
 ]
 
-try:
-    __import__('uuid')
-except ImportError:
-    # Older versions of Python did not include uuid
+if sys.version_info[:2] < (2, 7):
+    install_requires.append('importlib')
+
+if sys.version_info[:2] < (2, 5):
     install_requires.append('uuid')
 
 setup(
     name='django-sentry',
-    version='1.8.6.2',
+    version='1.8.7',
     author='David Cramer',
     author_email='dcramer@gmail.com',
     url='http://github.com/dcramer/django-sentry',
