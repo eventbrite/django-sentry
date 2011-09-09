@@ -33,15 +33,12 @@ install_requires = [
     'django-templatetag-sugar>=0.1.0',
 ]
 
-if sys.version_info[:2] < (2, 7):
-    install_requires.append('importlib')
-
 if sys.version_info[:2] < (2, 5):
     install_requires.append('uuid')
 
 setup(
     name='django-sentry',
-    version='1.8.7',
+    version='1.10.1',
     author='David Cramer',
     author_email='dcramer@gmail.com',
     url='http://github.com/dcramer/django-sentry',

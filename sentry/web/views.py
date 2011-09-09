@@ -14,17 +14,15 @@ from django.http import HttpResponse, HttpResponseBadRequest, \
 from django.shortcuts import get_object_or_404
 from django.template.loader import render_to_string
 from django.utils.encoding import smart_str
-from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import csrf_protect, csrf_exempt
 
 from sentry.conf import settings
-from sentry.utils import get_filters, is_float, get_signature, parse_auth_header
-from sentry.utils.compat import pickle
 from sentry.models import GroupedMessage, Message
 from sentry.plugins import GroupActionProvider
 from sentry.templatetags.sentry_helpers import with_priority
-from sentry.utils import json
-from sentry.web.reporter import ImprovedExceptionReporter
+from sentry.utils import get_filters, is_float, get_signature, parse_auth_header, json
+from sentry.utils.compat import pickle
+from sentry.utils.stacks import get_template_info
 
 uuid_re = re.compile(r'^[a-z0-9]{32}$')
 
@@ -73,7 +71,7 @@ def login_required(func):
             if not request.user.is_authenticated():
                 return HttpResponseRedirect(settings.LOGIN_URL or reverse('sentry-login'))
             if not request.user.has_perm('sentry.can_view'):
-                return render_to_response('missing_permissions.html', status=400)
+                return render_to_response('sentry/missing_permissions.html', status=400)
         return func(request, *args, **kwargs)
     wrapped.__doc__ = func.__doc__
     wrapped.__name__ = func.__name__
@@ -282,8 +280,23 @@ def ajax_handler(request):
         response = HttpResponse(json.dumps(data))
         response['Content-Type'] = 'application/json'
         return response
-        
-    if op in ['notification','poll','resolve', 'clear']:
+    
+    def chart(request):
+        gid = request.REQUEST.get('gid')
+        if not gid:
+            return HttpResponseForbidden()
+
+        try:
+            group = GroupedMessage.objects.get(pk=gid)
+        except GroupedMessage.DoesNotExist:
+            return HttpResponseForbidden()
+        data = GroupedMessage.objects.get_chart_data(group)
+
+        response = HttpResponse(json.dumps(data))
+        response['Content-Type'] = 'application/json'
+        return response
+    
+    if op in ['notification', 'poll', 'resolve', 'clear', 'chart']:
         return locals()[op](request)  
     else:
         return HttpResponseBadRequest()
@@ -299,33 +312,52 @@ def group(request, group_id):
         # (such as a post_save signal failing)
         obj = Message(group=group, data=group.data)
 
-    if '__sentry__' in obj.data and 'exc' in obj.data['__sentry__']:
-        module, args, frames = obj.data['__sentry__']['exc']
-        obj.class_name = str(obj.class_name)
-        # We fake the exception class due to many issues with imports/builtins/etc
-        exc_type = type(obj.class_name, (Exception,), {})
-        exc_value = exc_type(obj.message)
+    # template information
+    template_info = None
+    # exception information
+    exc_type, exc_value = None, None
+    # stack frames
+    frames = None
+    # module versions
+    version_data = None
+    user_data = None
 
-        exc_value.args = args
-    
-        reporter = ImprovedExceptionReporter(obj.request, exc_type, exc_value, frames, obj.data['__sentry__'].get('template'))
-        traceback = mark_safe(reporter.get_traceback_html())
-        version_data = obj.data['__sentry__'].get('versions', {}).iteritems()
+    if '__sentry__' in obj.data:
+        sentry_data = obj.data['__sentry__']
+        if 'exc' in sentry_data:
+            module, args, frames = sentry_data['exc']
+        elif 'exception' in sentry_data:
+            module, args = sentry_data['exception']
+        else:
+            module, args = None, None
+        
+        if 'frames' in sentry_data:
+            frames = sentry_data['frames']
 
-    elif group.traceback:
-        traceback = mark_safe('<pre>%s</pre>' % (group.traceback,))
-        version_data = None
+        if 'user' in sentry_data:
+            user_data = sentry_data['user']
+
+        if module and args:
+            # We fake the exception class due to many issues with imports/builtins/etc
+            exc_type = type(str(obj.class_name), (Exception,), {})
+            exc_value = exc_type(obj.message)
+            exc_value.args = args
+
+        if 'template' in sentry_data:
+            template_info = get_template_info(sentry_data['template'], exc_value)
     
-    else:
-        traceback = None
-        version_data = None
-    
+        if 'versions' in sentry_data:
+            version_data = sentry_data['versions'].iteritems()
+
     return render_to_response('sentry/group/details.html', {
         'page': 'details',
         'group': group,
         'json_data': iter_data(obj),
-        'traceback': traceback,
+        'user_data': user_data,
         'version_data': version_data,
+        'frames': frames,
+        'template_info': template_info,
+        'request': request,
     })
 
 @login_required
@@ -338,6 +370,7 @@ def group_message_list(request, group_id):
         'group': group,
         'message_list': message_list,
         'page': 'messages',
+        'request': request
     })
 
 @login_required
@@ -345,31 +378,48 @@ def group_message_details(request, group_id, message_id):
     group = get_object_or_404(GroupedMessage, pk=group_id)
 
     message = get_object_or_404(group.message_set, pk=message_id)
+
+    # template information
+    template_info = None
+    # exception information
+    exc_type, exc_value = None, None
+    # stack frames
+    frames = None
+    user_data = None
     
-    if '__sentry__' in message.data and 'exc' in message.data['__sentry__']:
-        module, args, frames = message.data['__sentry__']['exc']
-        message.class_name = str(message.class_name)
-        # We fake the exception class due to many issues with imports/builtins/etc
-        exc_type = type(message.class_name, (Exception,), {})
-        exc_value = exc_type(message.message)
+    if '__sentry__' in message.data:
+        sentry_data = message.data['__sentry__']
+        if 'exc' in sentry_data:
+            module, args, frames = sentry_data['exc']
+        elif 'exception' in sentry_data:
+            module, args = sentry_data['exception']
+        else:
+            module, args = None, None
+        
+        if 'frames' in sentry_data:
+            frames = sentry_data['frames']
 
-        exc_value.args = args
-    
-        reporter = ImprovedExceptionReporter(message.request, exc_type, exc_value, frames, message.data['__sentry__'].get('template'))
-        traceback = mark_safe(reporter.get_traceback_html())
+        if 'user' in sentry_data:
+            user_data = sentry_data['user']
 
-    elif group.traceback:
-        traceback = mark_safe('<pre>%s</pre>' % (group.traceback,))
+        if module and args:
+            # We fake the exception class due to many issues with imports/builtins/etc
+            exc_type = type(str(message.class_name), (Exception,), {})
+            exc_value = exc_type(message.message)
+            exc_value.args = args
 
-    else:
-        traceback = None
+        if 'template' in sentry_data:
+            template_info = get_template_info(sentry_data['template'], exc_value)
     
     return render_to_response('sentry/group/message.html', {
         'page': 'messages',
         'group': group,
         'message': message,
         'json_data': iter_data(message),
-        'traceback': traceback,
+        'user_data': user_data,
+        'frames': frames,
+        'template_info': template_info,
+        'request': request,
     })
 
 @csrf_exempt
@@ -403,6 +453,16 @@ def store(request):
         else:
             return HttpResponse('Unauthorized', status_code=401)
     else:
+        # Legacy request (deprecated as of 2.0)
+        key = request.POST.get('key')
+
+        if not key:
+            return HttpResponseForbidden('Invalid credentials')
+        
+        if key != settings.KEY:
+            warnings.warn('A client is sending the `key` parameter, which will be removed in Sentry 2.0', DeprecationWarning)
+            return HttpResponseForbidden('Invalid credentials')
+
         data = request.POST.get('data')
         if not data:
             return HttpResponseBadRequest('Missing data')
@@ -411,13 +471,6 @@ def store(request):
 
         if format not in ('pickle', 'json'):
             return HttpResponseBadRequest('Invalid format')
-
-        # Legacy request (deprecated as of 2.0)
-        key = request.POST.get('key')
-        
-        if key != settings.KEY:
-            warnings.warn('A client is sending the `key` parameter, which will be removed in Sentry 2.0', DeprecationWarning)
-            return HttpResponseForbidden('Invalid credentials')
 
     logger = logging.getLogger('sentry.server')
 
@@ -446,7 +499,7 @@ def store(request):
     # XXX: ensure keys are coerced to strings
     data = dict((smart_str(k), v) for k, v in data.iteritems())
 
-    if'timestamp' in data:
+    if 'timestamp' in data:
         if is_float(data['timestamp']):
             try:
                 data['timestamp'] = datetime.datetime.fromtimestamp(float(data['timestamp']))

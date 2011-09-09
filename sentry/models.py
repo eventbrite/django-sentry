@@ -3,11 +3,12 @@ from __future__ import absolute_import
 import base64
 import logging
 import math
+import time
 
 from datetime import datetime
 
 from django.db import models
-from django.db.models import Count
+from django.db.models import Sum
 from django.utils.encoding import smart_unicode
 from django.utils.translation import ugettext_lazy as _
 
@@ -31,6 +32,15 @@ STATUS_LEVELS = (
     (1, _('resolved')),
 )
 
+# These are predefined builtin's
+FILTER_KEYS = (
+    ('server_name', _('server name')),
+    ('logger', _('logger')),
+    ('site', _('site')),
+)
+
+logger = logging.getLogger('sentry.errors')
+
 class GzippedDictField(models.TextField):
     """
     Slightly different from a JSONField in the sense that the default
@@ -40,13 +50,18 @@ class GzippedDictField(models.TextField):
  
     def to_python(self, value):
         if isinstance(value, basestring) and value:
-            value = pickle.loads(base64.b64decode(value).decode('zlib'))
+            try:
+                value = pickle.loads(base64.b64decode(value).decode('zlib'))
+            except Exception, e:
+                logger.exception(e)
+                return {}
         elif not value:
             return {}
         return value
 
     def get_prep_value(self, value):
-        if value is None: return
+        if value is None:
+            return
         return base64.b64encode(pickle.dumps(transform(value)).encode('zlib'))
  
     def value_to_string(self, obj):
@@ -132,7 +147,7 @@ class GroupedMessage(MessageBase):
         return (self.logger, self.view, self.checksum)
 
     def get_score(self):
-        return int(math.log(self.times_seen) * 600 + int(self.last_seen.strftime('%s')))
+        return int(math.log(self.times_seen) * 600 + float(time.mktime(self.last_seen.timetuple())))
 
     def mail_admins(self, request=None, fail_silently=True):
         from django.core.mail import send_mail
@@ -175,26 +190,26 @@ class GroupedMessage(MessageBase):
     
     @property
     def unique_urls(self):
-        return self.message_set.filter(url__isnull=False)\
-                   .values_list('url', 'logger', 'view', 'checksum')\
-                   .annotate(times_seen=Count('url'))\
-                   .values('url', 'times_seen')\
+        return self.messagefiltervalue_set.filter(key='url')\
+                   .values_list('value')\
+                   .annotate(times_seen=Sum('times_seen'))\
+                   .values_list('value', 'times_seen')\
                    .order_by('-times_seen')
 
     @property
     def unique_servers(self):
-        return self.message_set.filter(server_name__isnull=False)\
-                   .values_list('server_name', 'logger', 'view', 'checksum')\
-                   .annotate(times_seen=Count('server_name'))\
-                   .values('server_name', 'times_seen')\
+        return self.messagefiltervalue_set.filter(key='server_name')\
+                   .values_list('value')\
+                   .annotate(times_seen=Sum('times_seen'))\
+                   .values_list('value', 'times_seen')\
                    .order_by('-times_seen')
 
     @property
     def unique_sites(self):
-        return self.message_set.filter(site__isnull=False)\
-                   .values_list('site', 'logger', 'view', 'checksum')\
-                   .annotate(times_seen=Count('site'))\
-                   .values('site', 'times_seen')\
+        return self.messagefiltervalue_set.filter(key='site')\
+                   .values_list('value')\
+                   .annotate(times_seen=Sum('times_seen'))\
+                   .values_list('value', 'times_seen')\
                    .order_by('-times_seen')
 
     def get_version(self):
@@ -273,17 +288,52 @@ class Message(MessageBase):
         return module, self.data['__sentry__']['version']
 
 class FilterValue(models.Model):
-    FILTER_KEYS = (
-        ('server_name', _('server name')),
-        ('logger', _('logger')),
-        ('site', _('site')),
-    )
-    
+    """
+    Stores references to available filters.
+    """
     key = models.CharField(choices=FILTER_KEYS, max_length=32)
     value = models.CharField(max_length=200)
     
     class Meta:
         unique_together = (('key', 'value'),)
+    
+    def __unicode__(self):
+        return u'key=%s, value=%s' % (self.key, self.value)
+
+class MessageFilterValue(models.Model):
+    """
+    Stores the total number of messages seen by a group matching
+    the given filter.
+    """
+    group = models.ForeignKey(GroupedMessage)
+    times_seen = models.PositiveIntegerField(default=0)
+    key = models.CharField(choices=FILTER_KEYS, max_length=32)
+    value = models.CharField(max_length=200)
+    
+    class Meta:
+        unique_together = (('key', 'value', 'group'),)
+
+    def __unicode__(self):
+        return u'group_id=%s, times_seen=%s, key=%s, value=%s' % (self.group_id, self.times_seen,
+                                                                  self.key, self.value)
+
+class MessageCountByMinute(Model):
+    """
+    Stores the total number of messages seen by a group at 5 minute intervals
+    
+    e.g. if it happened at 08:34:55 the time would be normalized to 08:30:00
+    """
+    
+    group = models.ForeignKey(GroupedMessage)
+    date = models.DateTimeField() # normalized to HH:MM:00
+    times_seen = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        unique_together = (('group', 'date'),)
+
+    def __unicode__(self):
+        return u'group_id=%s, times_seen=%s, date=%s' % (self.group_id, self.times_seen, self.date)
+
 
 ### django-indexer
 

@@ -11,17 +11,17 @@ import urllib2
 import uuid
 
 from django.core.cache import cache
+from django.http import HttpRequest
 from django.template import TemplateSyntaxError
 from django.template.loader import LoaderOrigin
-from django.views.debug import ExceptionReporter
 from common.utils.redact import redact_query_dict, redact_cookies, redact_meta, redact_uri
-
 
 import sentry
 from sentry.conf import settings
 from sentry.utils import json
-from sentry.utils import construct_checksum, varmap, transform, get_installed_apps, force_unicode, \
-                           get_versions, shorten, get_signature, get_auth_header
+from sentry.utils import construct_checksum, transform, get_installed_apps, force_unicode, \
+                           get_versions, shorten, get_signature, get_auth_header, varmap
+from sentry.utils.stacks import get_stack_info, iter_stack_frames, iter_traceback_frames
 
 logger = logging.getLogger('sentry.errors')
 
@@ -62,7 +62,7 @@ class SentryClient(object):
             thrash_count = 0
 
         if thrash_count > settings.THRASHING_LIMIT:
-             return (True, self.get_last_message_id(checksum))
+            return (True, self.get_last_message_id(checksum))
 
         return (False, None)
 
@@ -87,12 +87,14 @@ class SentryClient(object):
             # Ensure we're not changing the original data which was passed
             # to Sentry
             kwargs['data'] = kwargs['data'].copy()
+        else:
+            kwargs['data'] = {}
+
+        if '__sentry__' not in kwargs['data']:
+            kwargs['data']['__sentry__'] = {}
 
         request = kwargs.pop('request', None)
-        if request:
-            if not kwargs.get('data'):
-                kwargs['data'] = {}
-            
+        if isinstance(request, HttpRequest):
             if not request.POST and request.raw_post_data:
                 post_data = request.raw_post_data
             else:
@@ -104,18 +106,27 @@ class SentryClient(object):
                 GET=redact_query_dict(request.GET),
                 COOKIES=redact_cookies(request.COOKIES),
             ))
+            
+            if hasattr(request, 'user'):
+                if request.user.is_authenticated():
+                    user_info = {
+                        'is_authenticated': True,
+                        'id': request.user.pk,
+                        'username': request.user.username,
+                        'email': request.user.email,
+                    }
+                else:
+                    user_info = {
+                        'is_authenticated': False,
+                    }
+
+                kwargs['data']['__sentry__']['user'] = user_info
 
             if not kwargs.get('url'):
                 kwargs['url'] = redact_uri(request.build_absolute_uri())
 
         kwargs.setdefault('level', logging.ERROR)
         kwargs.setdefault('server_name', settings.NAME)
-
-        # save versions of all installed apps
-        if 'data' not in kwargs or '__sentry__' not in (kwargs['data'] or {}):
-            if kwargs.get('data') is None:
-                kwargs['data'] = {}
-            kwargs['data']['__sentry__'] = {}
 
         versions = get_versions()
         kwargs['data']['__sentry__']['versions'] = versions
@@ -126,10 +137,46 @@ class SentryClient(object):
                 continue
             kwargs['data'][k] = shorten(v)
 
+        # if we've passed frames, lets try to fetch the culprit
+        if not kwargs.get('view') and kwargs['data']['__sentry__'].get('frames'):
+            # This should be cached
+            modules = get_installed_apps()
+            if settings.INCLUDE_PATHS:
+                modules = set(list(modules) + settings.INCLUDE_PATHS)
+        
+            def contains(iterator, value):
+                for k in iterator:
+                    if value.startswith(k):
+                        return True
+                return False
+            
+            # We iterate through each frame looking for an app in INSTALLED_APPS
+            # When one is found, we mark it as last "best guess" (best_guess) and then
+            # check it against SENTRY_EXCLUDE_PATHS. If it isnt listed, then we
+            # use this option. If nothing is found, we use the "best guess".
+            best_guess = None
+            view = None
+            for frame in kwargs['data']['__sentry__']['frames']:
+                try:
+                    view = '.'.join([frame['module'], frame['function']])
+                except:
+                    continue
+                if contains(modules, view):
+                    if not (contains(settings.EXCLUDE_PATHS, view) and best_guess):
+                        best_guess = view
+                elif best_guess:
+                    break
+            if best_guess:
+                view = best_guess
+        
+            if view:
+                kwargs['view'] = view
+
+        # try to fetch the current version
         if kwargs.get('view'):
             # get list of modules from right to left
             parts = kwargs['view'].split('.')
-            module_list = ['.'.join(parts[:idx]) for idx in xrange(1, len(parts)+1)][::-1]
+            module_list = ['.'.join(parts[:idx]) for idx in xrange(1, len(parts) + 1)][::-1]
             version = None
             module = None
             for m in module_list:
@@ -180,7 +227,7 @@ class SentryClient(object):
             # attach the sentry object to the request
             request.sentry = {
                 'id': message_id,
-                'trashed': False,
+                'thrashed': False,
             }
         
         # store the last message_id incase we hit thrashing limits
@@ -199,7 +246,7 @@ class SentryClient(object):
             for url in settings.REMOTE_URL:
                 timestamp = time.time()
                 signature = get_signature(message, timestamp)
-                headers={
+                headers = {
                     'Authorization': get_auth_header(signature, timestamp, '%s/%s' % (self.__class__.__name__, sentry.VERSION)),
                     'Content-Type': 'application/octet-stream',
                 }
@@ -209,11 +256,11 @@ class SentryClient(object):
                 except urllib2.HTTPError, e:
                     body = e.read()
                     logger.error('Unable to reach Sentry log server: %s (url: %%s, body: %%s)' % (e,), url, body,
-                                 exc_info=True, extra={'data':{'body': body, 'remote_url': url}})
+                                 exc_info=True, extra={'data': {'body': body, 'remote_url': url}})
                     logger.log(kwargs.pop('level', None) or logging.ERROR, kwargs.pop('message', None))
                 except urllib2.URLError, e:
                     logger.error('Unable to reach Sentry log server: %s (url: %%s)' % (e,), url,
-                                 exc_info=True, extra={'data':{'remote_url': url}})
+                                 exc_info=True, extra={'data': {'remote_url': url}})
                     logger.log(kwargs.pop('level', None) or logging.ERROR, kwargs.pop('message', None))
         else:
             from sentry.models import GroupedMessage
@@ -246,8 +293,29 @@ class SentryClient(object):
         if record.exc_info and all(record.exc_info):
             return self.create_from_exception(record.exc_info, **kwargs)
 
+        data = kwargs.pop('data', {}) or {}
+        data['__sentry__'] = {}
+        if getattr(record, 'stack', settings.AUTO_LOG_STACKS):
+            stack = []
+            found = None
+            for frame in iter_stack_frames():
+                # There are initial frames from Sentry that need skipped
+                name = frame.f_globals.get('__name__')
+                if found is None:
+                    if name == 'logging':
+                        found = False
+                    continue
+                elif not found:
+                    if name != 'logging':
+                        found = True
+                    else:
+                        continue
+                stack.append(frame)
+            data['__sentry__']['frames'] = varmap(shorten, get_stack_info(stack))
+
         return self.process(
             traceback=record.exc_text,
+            data=data,
             **kwargs
         )
 
@@ -267,67 +335,27 @@ class SentryClient(object):
         new_exc = bool(exc_info)
         if not exc_info or exc_info is True:
             exc_info = sys.exc_info()
+
+        data = kwargs.pop('data', {}) or {}
         
         try:
             exc_type, exc_value, exc_traceback = exc_info
 
-            reporter = ExceptionReporter(None, exc_type, exc_value, exc_traceback)
-            frames = varmap(shorten, reporter.get_traceback_frames())
+            frames = varmap(shorten, get_stack_info(iter_traceback_frames(exc_traceback)))
 
-            if not kwargs.get('view'):
-                # This should be cached
-                modules = get_installed_apps()
-                if settings.INCLUDE_PATHS:
-                    modules = set(list(modules) + settings.INCLUDE_PATHS)
-
-                def iter_tb_frames(tb):
-                    while tb:
-                        yield tb.tb_frame
-                        tb = tb.tb_next
-            
-                def contains(iterator, value):
-                    for k in iterator:
-                        if value.startswith(k):
-                            return True
-                    return False
-                
-                # We iterate through each frame looking for an app in INSTALLED_APPS
-                # When one is found, we mark it as last "best guess" (best_guess) and then
-                # check it against SENTRY_EXCLUDE_PATHS. If it isnt listed, then we
-                # use this option. If nothing is found, we use the "best guess".
-                best_guess = None
-                view = None
-                for frame in iter_tb_frames(exc_traceback):
-                    try:
-                        view = '.'.join([frame.f_globals['__name__'], frame.f_code.co_name])
-                    except:
-                        continue
-                    if contains(modules, view):
-                        if not (contains(settings.EXCLUDE_PATHS, view) and best_guess):
-                            best_guess = view
-                    elif best_guess:
-                        break
-                if best_guess:
-                    view = best_guess
-            
-                if view:
-                    kwargs['view'] = view
-
-            data = kwargs.pop('data', {}) or {}
             if hasattr(exc_type, '__class__'):
                 exc_module = exc_type.__class__.__module__
             else:
                 exc_module = None
-            data['__sentry__'] = {
-                'exc': map(transform, [exc_module, exc_value.args, frames]),
-            }
+
+            data['__sentry__'] = {}
+            data['__sentry__']['frames'] = frames
+            data['__sentry__']['exception'] = [exc_module, exc_value.args]
 
             if (isinstance(exc_value, TemplateSyntaxError) and \
                 isinstance(getattr(exc_value, 'source', None), (tuple, list)) and isinstance(exc_value.source[0], LoaderOrigin)):
                 origin, (start, end) = exc_value.source
-                data['__sentry__'].update({
-                    'template': (origin.reload(), start, end, origin.name),
-                })
+                data['__sentry__']['template'] = (origin.reload(), start, end, origin.name)
                 kwargs['view'] = origin.loadname
         
             tb_message = '\n'.join(traceback.format_exception(exc_type, exc_value, exc_traceback))

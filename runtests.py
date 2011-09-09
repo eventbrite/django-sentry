@@ -4,6 +4,8 @@ import sys
 from os.path import dirname, abspath, join
 from optparse import OptionParser
 
+sys.path.insert(0, dirname(abspath(__file__)))
+
 logging.getLogger('sentry').addHandler(logging.StreamHandler())
 
 from django.conf import settings
@@ -19,7 +21,7 @@ if not settings.configured:
         },
         # HACK: this fixes our threaded runserver remote tests
         # DATABASE_NAME='test_sentry',
-        # TEST_DATABASE_NAME='test_sentry',
+        TEST_DATABASE_NAME='sentry_tests.db',
         INSTALLED_APPS=[
             'django.contrib.auth',
             'django.contrib.admin',
@@ -39,6 +41,7 @@ if not settings.configured:
 
             # included plugin tests
             'sentry.plugins.sentry_servers',
+            'sentry.plugins.sentry_sites',
             'sentry.plugins.sentry_urls',
             'sentry.plugins.sentry_redmine',
 
@@ -74,8 +77,6 @@ def runtests(*test_args, **kwargs):
 
     if not test_args:
         test_args = ['tests']
-
-    sys.path.insert(0, dirname(abspath(__file__)))
 
     failures = run_tests(test_args,
         verbosity=kwargs.get('verbosity', 1),

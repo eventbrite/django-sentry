@@ -1,3 +1,45 @@
+1.10.1
+
+* Fixed an issue that was causing servers to show logger names.
+
+1.10.0
+
+* You can now pass ``extra={'stack': True}`` to logging methods to capture
+  the current frames and their locals.
+* Code refactoring in various places related to stack extraction.
+* Denormalized graph data in MessageCountByMinute (stores at 5m intervals).
+* Denormalized filter counts into MessageFilterValue
+* Added message sampling (adapted from Yuri Baburov's patch).
+* Added SENTRY_MAIL_LEVEL setting.
+* Added SENTRY_MAIL_INCLUDE_LOGGERS setting.
+* Added SENTRY_MAIL_EXCLUDE_LOGGERS setting.
+* Added the ``level`` argument to the cleanup command.
+* The thrashed key is now set correctly in request.sentry.
+* Added user information to all messages that have ``request``.
+* Changed the hashing function for messages that include
+  stacktraces to ignore the ``message`` and line numbers.
+* Much improved test coverage.
+
+1.9.0
+
+* Load the Frequency chart asynchronously.
+* Frequency chart no longer shows for SQLite.
+* Switch graphing library to Highstock from Highcharts.
+
+1.8.10
+
+* Ensure dictionary keys are coerced to strings.
+* Fixed path to missing_permissions.html.
+
+1.8.9
+
+* Safely handle unpickling objects that may not have been stored in a
+  valid format.
+
+1.8.8
+
+* Changed ``sentry cleanup`` to use a range query.
+
 1.8.7
 
 * Added "Clear Feed" option.

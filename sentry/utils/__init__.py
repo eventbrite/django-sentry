@@ -11,6 +11,7 @@ from types import ClassType, TypeType
 
 import django
 from django.conf import settings as django_settings
+from django.http import HttpRequest
 from django.utils.encoding import force_unicode
 from django.utils.functional import Promise
 from django.utils.hashcompat import md5_constructor, sha_constructor
@@ -53,12 +54,21 @@ def get_db_engine(alias='default'):
 def construct_checksum(level=logging.ERROR, class_name='', traceback='', message='', **kwargs):
     checksum = md5_constructor(str(level))
     checksum.update(class_name or '')
-    if traceback:
+
+    if 'data' in kwargs and kwargs['data'] and '__sentry__' in kwargs['data'] and 'frames' in kwargs['data']['__sentry__']:
+        frames = kwargs['data']['__sentry__']['frames']
+        for frame in frames:
+            checksum.update(frame['module'])
+            checksum.update(frame['function'])
+
+    elif traceback:
         traceback = '\n'.join(traceback.split('\n')[:-3])
-    message = traceback or message
-    if isinstance(message, unicode):
-        message = message.encode('utf-8', 'replace')
-    checksum.update(message)
+
+    elif message:
+        if isinstance(message, unicode):
+            message = message.encode('utf-8', 'replace')
+        checksum.update(message)
+
     return checksum.hexdigest()
 
 def varmap(func, var, context=None):
@@ -98,11 +108,15 @@ def transform(value, stack=[], context=None):
     if any(value is s for s in stack):
         ret = 'cycle'
     elif isinstance(value, (tuple, list, set, frozenset)):
-        ret = type(value)(transform_rec(o) for o in value)
+        try:
+            ret = type(value)(transform_rec(o) for o in value)
+        except TypeError:
+            # We may be dealing with a namedtuple
+            ret = type(value)(transform_rec(o) for o in value[:])
     elif isinstance(value, uuid.UUID):
         ret = repr(value)
     elif isinstance(value, dict):
-        ret = dict((k, transform_rec(v)) for k, v in value.iteritems())
+        ret = dict((str(k), transform_rec(v)) for k, v in value.iteritems())
     elif isinstance(value, unicode):
         ret = to_unicode(value)
     elif isinstance(value, str):
@@ -287,7 +301,7 @@ def get_auth_header(signature, timestamp, client):
 def parse_auth_header(header):
     return dict(map(lambda x: x.strip().split('='), header.split(' ', 1)[1].split(',')))
 
-class MockDjangoRequest(object):
+class MockDjangoRequest(HttpRequest):
     GET = {}
     POST = {}
     META = {}
@@ -295,7 +309,8 @@ class MockDjangoRequest(object):
     FILES = {}
     raw_post_data = ''
     url = ''
-    
+    path = '/'
+
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
     
@@ -322,3 +337,12 @@ class MockDjangoRequest(object):
             (get, post, cookies, meta)
 
     def build_absolute_uri(self): return self.url
+
+def should_mail(group):
+    if int(group.level) < settings.MAIL_LEVEL:
+        return False
+    if settings.MAIL_INCLUDE_LOGGERS is not None and group.logger not in settings.MAIL_INCLUDE_LOGGERS:
+        return False
+    if settings.MAIL_EXCLUDE_LOGGERS and group.logger in settings.MAIL_EXCLUDE_LOGGERS:
+        return False
+    return True

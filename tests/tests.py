@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 
+from __future__ import absolute_import
+
 import base64
 import datetime
 import getpass
 import logging
 import os.path
 import socket
-import sys
 import time
 
 from django.conf import settings as django_settings
@@ -23,13 +24,14 @@ from sentry.client.base import SentryClient
 from sentry.client.handlers import SentryHandler
 from sentry.client.models import get_client
 from sentry.conf import settings
-from sentry.models import Message, GroupedMessage
-from sentry.utils import json
-from sentry.utils import transform, get_signature, get_auth_header
+from sentry.models import Message, GroupedMessage, MessageCountByMinute, \
+                          FilterValue, MessageFilterValue
+from sentry.utils import json, transform, get_signature, get_auth_header, \
+                         MockDjangoRequest
 from sentry.utils.compat import pickle
 
-from models import TestModel, DuplicateKeyModel
-from utils import TestServerThread, conditional_on_module
+from tests.models import TestModel, DuplicateKeyModel
+from tests.utils import TestServerThread, conditional_on_module
 
 # class NullHandler(logging.Handler):
 #     def emit(self, record):
@@ -71,7 +73,7 @@ class BaseTestCase(TestCase):
         )
         return resp
 
-class SentryTestCase(BaseTestCase):
+class SentryTest(BaseTestCase):
     ## Fixture setup/teardown
 
     def setUp(self):
@@ -170,7 +172,20 @@ class SentryTestCase(BaseTestCase):
             last = Message.objects.all().order_by('-id')[0:1].get()
             self.assertEquals(last.class_name, 'ValueError')
             self.assertEquals(last.message, 'This is a test info with an exception')
-            self.assertTrue(last.data.get('__sentry__', {}).get('exc'))
+            self.assertTrue('__sentry__' in last.data)
+            self.assertTrue('exception' in last.data['__sentry__'])
+            self.assertTrue('frames' in last.data['__sentry__'])
+
+        # test stacks
+        logger.info('This is a test of stacks', extra={'stack': True})
+        self.assertEquals(Message.objects.count(), 7)
+        self.assertEquals(GroupedMessage.objects.count(), 6)
+        last = Message.objects.all().order_by('-id')[0:1].get()
+        self.assertEquals(last.view, 'tests.tests.test_logger')
+        self.assertEquals(last.class_name, None)
+        self.assertEquals(last.message, 'This is a test of stacks')
+        self.assertTrue('__sentry__' in last.data)
+        self.assertTrue('frames' in last.data['__sentry__'])
 
         self.tearDownHandler()
 
@@ -194,7 +209,8 @@ class SentryTestCase(BaseTestCase):
         except Message.DoesNotExist, exc:
             message_id = get_client().create_from_exception()
             error = Message.objects.get(message_id=message_id)
-            self.assertTrue(error.data.get('__sentry__', {}).get('exc'))
+            self.assertTrue('__sentry__' in error.data)
+            self.assertTrue('exception' in error.data['__sentry__'])
         else:
             self.fail('Unable to create `Message` entry.')
 
@@ -203,12 +219,13 @@ class SentryTestCase(BaseTestCase):
         except Message.DoesNotExist, exc:
             message_id = get_client().create_from_exception()
             error = Message.objects.get(message_id=message_id)
-            self.assertTrue(error.data.get('__sentry__', {}).get('exc'))
+            self.assertTrue('__sentry__' in error.data)
+            self.assertTrue('exception' in error.data['__sentry__'])
         else:
             self.fail('Unable to create `Message` entry.')
 
         self.assertEquals(Message.objects.count(), 2)
-        self.assertEquals(GroupedMessage.objects.count(), 2)
+        self.assertEquals(GroupedMessage.objects.count(), 1)
         last = Message.objects.all().order_by('-id')[0:1].get()
         self.assertEquals(last.logger, 'root')
         self.assertEquals(last.class_name, 'DoesNotExist')
@@ -218,7 +235,7 @@ class SentryTestCase(BaseTestCase):
         get_client().create_from_text('This is an error', level=logging.DEBUG)
         
         self.assertEquals(Message.objects.count(), 3)
-        self.assertEquals(GroupedMessage.objects.count(), 3)
+        self.assertEquals(GroupedMessage.objects.count(), 2)
         last = Message.objects.all().order_by('-id')[0:1].get()
         self.assertEquals(last.logger, 'root')
         self.assertEquals(last.level, logging.DEBUG)
@@ -307,8 +324,9 @@ class SentryTestCase(BaseTestCase):
 
         self.assertEquals(error.url, 'a'*200)
         self.assertEquals(error.data['url'], 'a'*210)
-    
+        
     def test_thrashing(self):
+        request = MockDjangoRequest()
         settings.THRASHING_LIMIT = 10
         settings.THRASHING_TIMEOUT = 60
         
@@ -317,13 +335,19 @@ class SentryTestCase(BaseTestCase):
         
         message_id = None
         for i in range(0, 10):
-            this_message_id = get_client().create_from_text('hi')
+            this_message_id = get_client().create_from_text('test_thrashing', request=request)
             self.assertTrue(this_message_id is not None)
+            self.assertTrue(hasattr(request, 'sentry'))
+            self.assertTrue('thrashed' in request.sentry)
+            self.assertFalse(request.sentry['thrashed'])
             self.assertNotEquals(this_message_id, message_id)
             message_id = this_message_id
 
         for i in range(0, 40):
-            this_message_id = get_client().create_from_text('hi')
+            this_message_id = get_client().create_from_text('test_thrashing', request=request)
+            self.assertTrue(hasattr(request, 'sentry'))
+            self.assertTrue('thrashed' in request.sentry)
+            self.assertTrue(request.sentry['thrashed'])
             self.assertEquals(this_message_id, message_id)
         
         self.assertEquals(Message.objects.count(), settings.THRASHING_LIMIT)
@@ -410,7 +434,40 @@ class SentryTestCase(BaseTestCase):
         self.assertEquals(last.message, 'view exception')
         self.assertEquals(last.view, 'tests.views.raise_exc')
 
-    def test_request_middlware_exception(self):
+    def test_user_info(self):
+        user = User(username='admin', email='admin@example.com')
+        user.set_password('admin')
+        user.save()
+        
+        self.assertRaises(Exception, self.client.get, reverse('sentry-raise-exc'))
+        
+        self.assertEquals(GroupedMessage.objects.count(), 1)
+        self.assertEquals(Message.objects.count(), 1)
+        last = Message.objects.get()
+        self.assertTrue('user' in last.data['__sentry__'])
+        user_info = last.data['__sentry__']['user']
+        self.assertTrue('is_authenticated' in user_info)
+        self.assertFalse(user_info['is_authenticated'])
+        self.assertFalse('username' in user_info)
+        self.assertFalse('email' in user_info)
+        
+        self.assertTrue(self.client.login(username='admin', password='admin'))
+
+        self.assertRaises(Exception, self.client.get, reverse('sentry-raise-exc'))
+
+        self.assertEquals(GroupedMessage.objects.count(), 1)
+        self.assertEquals(Message.objects.count(), 2)
+        last = Message.objects.order_by('-id')[0]
+        self.assertTrue('user' in last.data['__sentry__'])
+        user_info = last.data['__sentry__']['user']
+        self.assertTrue('is_authenticated' in user_info)
+        self.assertTrue(user_info['is_authenticated'])
+        self.assertTrue('username' in user_info)
+        self.assertEquals(user_info['username'], 'admin')
+        self.assertTrue('email' in user_info)
+        self.assertEquals(user_info['email'], 'admin@example.com')
+
+    def test_request_middleware_exception(self):
         orig = list(django_settings.MIDDLEWARE_CLASSES)
         django_settings.MIDDLEWARE_CLASSES = orig + ['tests.middleware.BrokenRequestMiddleware',]
         
@@ -783,6 +840,137 @@ class SentryTestCase(BaseTestCase):
         self.assertEquals(last.data['tuple'][-2], '...')
         self.assertEquals(last.data['tuple'][-1], '(450 more elements)')
 
+    def test_denormalized_counters(self):
+        settings.MINUTE_NORMALIZATION = 0
+        
+        get_client().create_from_text('hi', timestamp=datetime.datetime.now() - datetime.timedelta(minutes=3))
+
+        self.assertEquals(Message.objects.count(), 1)
+        self.assertEquals(GroupedMessage.objects.count(), 1)
+        self.assertEquals(MessageCountByMinute.objects.count(), 1)
+        self.assertEquals(MessageFilterValue.objects.count(), 3)
+        self.assertEquals(FilterValue.objects.count(), 3)
+        
+        group = GroupedMessage.objects.get()
+
+        count = MessageCountByMinute.objects.get()
+        self.assertEquals(count.group, group)
+        self.assertEquals(count.times_seen, 1)
+        self.assertEquals(count.date, group.last_seen.replace(second=0, microsecond=0))
+
+        filter_map = dict((m.key, m) for m in MessageFilterValue.objects.all().order_by('key', 'value'))
+
+        self.assertTrue('server_name' in filter_map)
+        filtervalue = filter_map['server_name']
+        self.assertEquals(filtervalue.group, group)
+        self.assertEquals(filtervalue.times_seen, 1)
+        self.assertEquals(filtervalue.key, 'server_name')
+        self.assertEquals(filtervalue.value, settings.NAME)
+
+        self.assertTrue('site' in filter_map)
+        filtervalue = filter_map['site']
+        self.assertEquals(filtervalue.group, group)
+        self.assertEquals(filtervalue.times_seen, 1)
+        self.assertEquals(filtervalue.key, 'site')
+        self.assertEquals(filtervalue.value, settings.SITE)
+
+        self.assertTrue('logger' in filter_map)
+        filtervalue = filter_map['logger']
+        self.assertEquals(filtervalue.group, group)
+        self.assertEquals(filtervalue.times_seen, 1)
+        self.assertEquals(filtervalue.key, 'logger')
+        self.assertEquals(filtervalue.value, 'root')
+
+        filter_map = dict((m.key, m) for m in FilterValue.objects.all().order_by('key', 'value'))
+
+        self.assertTrue('server_name' in filter_map)
+        filtervalue = filter_map['server_name']
+        self.assertEquals(filtervalue.key, 'server_name')
+        self.assertEquals(filtervalue.value, settings.NAME)
+
+        self.assertTrue('site' in filter_map)
+        filtervalue = filter_map['site']
+        self.assertEquals(filtervalue.key, 'site')
+        self.assertEquals(filtervalue.value, settings.SITE)
+
+        self.assertTrue('logger' in filter_map)
+        filtervalue = filter_map['logger']
+        self.assertEquals(filtervalue.key, 'logger')
+        self.assertEquals(filtervalue.value, 'root')
+
+        get_client().create_from_text('hi')
+
+        self.assertEquals(Message.objects.count(), 2)
+        self.assertEquals(GroupedMessage.objects.count(), 1)
+        self.assertEquals(MessageCountByMinute.objects.count(), 2)
+        self.assertEquals(MessageFilterValue.objects.count(), 3)
+        self.assertEquals(FilterValue.objects.count(), 3)
+        
+        group = GroupedMessage.objects.get()
+
+        counts = MessageCountByMinute.objects.all()
+        for count in counts:
+            self.assertEquals(count.group, group)
+            self.assertEquals(count.times_seen, 1)
+            self.assertEquals(count.date.second, 0)
+            self.assertEquals(count.date.microsecond, 0)
+
+        filter_map = dict((m.key, m) for m in MessageFilterValue.objects.all().order_by('key', 'value'))
+
+        self.assertTrue('server_name' in filter_map)
+        filtervalue = filter_map['server_name']
+        self.assertEquals(filtervalue.group, group)
+        self.assertEquals(filtervalue.times_seen, 2)
+        self.assertEquals(filtervalue.key, 'server_name')
+        self.assertEquals(filtervalue.value, settings.NAME)
+
+        self.assertTrue('site' in filter_map)
+        filtervalue = filter_map['site']
+        self.assertEquals(filtervalue.group, group)
+        self.assertEquals(filtervalue.times_seen, 2)
+        self.assertEquals(filtervalue.key, 'site')
+        self.assertEquals(filtervalue.value, settings.SITE)
+
+        self.assertTrue('logger' in filter_map)
+        filtervalue = filter_map['logger']
+        self.assertEquals(filtervalue.group, group)
+        self.assertEquals(filtervalue.times_seen, 2)
+        self.assertEquals(filtervalue.key, 'logger')
+        self.assertEquals(filtervalue.value, 'root')
+
+        filter_map = dict((m.key, m) for m in FilterValue.objects.all().order_by('key', 'value'))
+
+        self.assertTrue('server_name' in filter_map)
+        filtervalue = filter_map['server_name']
+        self.assertEquals(filtervalue.key, 'server_name')
+        self.assertEquals(filtervalue.value, settings.NAME)
+
+        self.assertTrue('site' in filter_map)
+        filtervalue = filter_map['site']
+        self.assertEquals(filtervalue.key, 'site')
+        self.assertEquals(filtervalue.value, settings.SITE)
+
+        self.assertTrue('logger' in filter_map)
+        filtervalue = filter_map['logger']
+        self.assertEquals(filtervalue.key, 'logger')
+        self.assertEquals(filtervalue.value, 'root')
+
+    # def test_sampling(self):
+    #     settings.THRASHING_LIMIT = 0
+    #     settings.THRASHING_TIMEOUT = 0
+    # 
+    #     Message.objects.all().delete()
+    #     GroupedMessage.objects.all().delete()
+    #     
+    #     message_id = None
+    #     for i in xrange(0, 1000):
+    #         get_client().create_from_text('hi')
+    #     
+    #     self.assertEquals(GroupedMessage.objects.count(), 1)
+    #     group = GroupedMessage.objects.get()
+    #     self.assertEquals(group.times_seen, 1000)
+    #     self.assertNotEquals(Message.objects.count(), 400)
+
 class SentryViewsTest(BaseTestCase):
     fixtures = ['tests/fixtures/views.json']
     
@@ -818,6 +1006,27 @@ class SentryViewsTest(BaseTestCase):
         resp = self.client.get(reverse('sentry-group', args=[2]), follow=True)
         self.assertEquals(resp.status_code, 200, resp.content)
         self.assertTemplateUsed(resp, 'sentry/group/details.html')
+        self.assertTrue('group' in resp.context)
+        group = GroupedMessage.objects.get(pk=2)
+        self.assertEquals(resp.context['group'], group)
+
+    def test_group_message_list(self):
+        self.client.login(username='admin', password='admin')
+        resp = self.client.get(reverse('sentry-group-messages', args=[2]), follow=True)
+        self.assertEquals(resp.status_code, 200, resp.content)
+        self.assertTemplateUsed(resp, 'sentry/group/message_list.html')
+        self.assertTrue('group' in resp.context)
+        group = GroupedMessage.objects.get(pk=2)
+        self.assertEquals(resp.context['group'], group)
+
+    def test_group_message_details(self):
+        self.client.login(username='admin', password='admin')
+        resp = self.client.get(reverse('sentry-group-message', args=[2, 4]), follow=True)
+        self.assertEquals(resp.status_code, 200, resp.content)
+        self.assertTemplateUsed(resp, 'sentry/group/message.html')
+        self.assertTrue('group' in resp.context)
+        group = GroupedMessage.objects.get(pk=2)
+        self.assertEquals(resp.context['group'], group)
 
 class SentryRemoteTest(BaseTestCase):
 
@@ -833,7 +1042,7 @@ class SentryRemoteTest(BaseTestCase):
 
     def test_no_key(self):
         resp = self.client.post(reverse('sentry-store'))
-        self.assertEquals(resp.status_code, 400)
+        self.assertEquals(resp.status_code, 403)
 
     def test_no_data(self):
         resp = self.client.post(reverse('sentry-store'), {
@@ -1200,6 +1409,14 @@ class SentryTransformTest(BaseTestCase):
                     transform(fake_gettext_lazy("something")))),
             u'Igpay Atinlay')
 
+    def test_dict_keys(self):
+        x = {u'foo': 'bar'}
+
+        result = transform(x)
+        keys = result.keys()
+        self.assertEquals(len(keys), 1)
+        self.assertEquals(keys[0], 'foo')
+        self.assertTrue(isinstance(keys[0], str))
 
 class SentryClientTest(BaseTestCase):
     def setUp(self):
@@ -1281,17 +1498,80 @@ class SentryClientTest(BaseTestCase):
     # 
     #     settings.CLIENT = 'sentry.client.base.SentryClient'
 
-class SentryCommandTest(BaseTestCase):
+class SentryCleanupTest(BaseTestCase):
     fixtures = ['tests/fixtures/cleanup.json']
     
-    def test_cleanup(self):
+    def test_simple(self):
         from sentry.scripts.runner import cleanup
-        
-        self.assertEquals(Message.objects.count(), 10)
         
         cleanup(days=1)
         
         self.assertEquals(Message.objects.count(), 0)
+        self.assertEquals(GroupedMessage.objects.count(), 0)
+        self.assertEquals(MessageCountByMinute.objects.count(), 0)
+        self.assertEquals(MessageFilterValue.objects.count(), 0)
+
+    def test_logger(self):
+        from sentry.scripts.runner import cleanup
+        
+        cleanup(days=1, logger='sentry')
+        
+        self.assertEquals(Message.objects.count(), 8)
+        for message in Message.objects.all():
+            self.assertNotEquals(message.logger, 'sentry')
+        self.assertEquals(GroupedMessage.objects.count(), 3)
+        for message in GroupedMessage.objects.all():
+            self.assertNotEquals(message.logger, 'sentry')
+
+        cleanup(days=1, logger='awesome')
+        
+        self.assertEquals(Message.objects.count(), 4)
+        for message in Message.objects.all():
+            self.assertNotEquals(message.logger, 'awesome')
+        self.assertEquals(GroupedMessage.objects.count(), 2)
+        for message in GroupedMessage.objects.all():
+            self.assertNotEquals(message.logger, 'awesome')
+
+        cleanup(days=1, logger='root')
+        
+        self.assertEquals(Message.objects.count(), 0)
+        self.assertEquals(GroupedMessage.objects.count(), 0)
+        self.assertEquals(MessageCountByMinute.objects.count(), 0)
+        self.assertEquals(MessageFilterValue.objects.count(), 0)
+
+    def test_server_name(self):
+        from sentry.scripts.runner import cleanup
+        
+        cleanup(days=1, server='dcramer.local')
+        
+        self.assertEquals(Message.objects.count(), 2)
+        for message in Message.objects.all():
+            self.assertNotEquals(message.server_name, 'dcramer.local')
+        self.assertEquals(GroupedMessage.objects.count(), 1)
+
+        cleanup(days=1, server='node.local')
+        
+        self.assertEquals(Message.objects.count(), 0)
+        self.assertEquals(GroupedMessage.objects.count(), 0)
+        self.assertEquals(MessageCountByMinute.objects.count(), 0)
+        self.assertEquals(MessageFilterValue.objects.count(), 0)
+
+    def test_level(self):
+        from sentry.scripts.runner import cleanup
+        
+        cleanup(days=1, level=logging.ERROR)
+        
+        self.assertEquals(Message.objects.count(), 1)
+        for message in Message.objects.all():
+            self.assertNotEquals(message.level, logging.ERROR)
+        self.assertEquals(GroupedMessage.objects.count(), 1)
+
+        cleanup(days=1, level=logging.DEBUG)
+        
+        self.assertEquals(Message.objects.count(), 0)
+        self.assertEquals(GroupedMessage.objects.count(), 0)
+        self.assertEquals(MessageCountByMinute.objects.count(), 0)
+        self.assertEquals(MessageFilterValue.objects.count(), 0)
 
 class SentrySearchTest(BaseTestCase):
     @conditional_on_module('haystack')
@@ -1302,3 +1582,32 @@ class SentrySearchTest(BaseTestCase):
         qs = get_search_query_set('error')
         self.assertEquals(qs.count(), 1)
         self.assertEquals(qs[0:1][0].message, 'test search error')
+
+class SentryPluginTest(BaseTestCase):
+    def test_registration(self):
+        from sentry.plugins import GroupActionProvider
+        self.assertEquals(len(GroupActionProvider.plugins), 4)
+    
+    def test_get_widgets(self):
+        from sentry.templatetags.sentry_helpers import get_widgets
+        get_client().create_from_text('hi')
+        
+        group = GroupedMessage.objects.get()
+        widgets = list(get_widgets(group, MockDjangoRequest()))
+        self.assertEquals(len(widgets), 3)
+
+    def test_get_panels(self):
+        from sentry.templatetags.sentry_helpers import get_panels
+        get_client().create_from_text('hi')
+        
+        group = GroupedMessage.objects.get()
+        widgets = list(get_panels(group, MockDjangoRequest()))
+        self.assertEquals(len(widgets), 3)
+
+    def test_get_actions(self):
+        from sentry.templatetags.sentry_helpers import get_actions
+        get_client().create_from_text('hi')
+        
+        group = GroupedMessage.objects.get()
+        widgets = list(get_actions(group, MockDjangoRequest()))
+        self.assertEquals(len(widgets), 1)

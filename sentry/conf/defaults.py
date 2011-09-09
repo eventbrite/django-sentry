@@ -70,7 +70,10 @@ URL_PREFIX = ''
 # Allow access to Sentry without authentication.
 PUBLIC = False
 
+# The maximum number of elements to store for a list-like structure.
 MAX_LENGTH_LIST = 50
+
+# The maximum length to store of a string-like structure.
 MAX_LENGTH_STRING = 200
 
 EMAIL_SUBJECT_PREFIX = ''
@@ -80,6 +83,26 @@ INTERNAL_IPS = set()
 SERVER_EMAIL = 'root@localhost'
 
 LOGIN_URL = None
+
+# Automatically log frame stacks from all ``logging`` messages.
+AUTO_LOG_STACKS = False
+
+# Only store a portion of all messages per unique group.
+SAMPLE_DATA = True
+
+# Restrict emails to only ``messages >= this value``.
+MAIL_LEVEL = logging.DEBUG
+
+# A list of loggers to restrict emails to.
+MAIL_INCLUDE_LOGGERS = None
+
+# A list of loggers to exclude in emails.
+MAIL_EXCLUDE_LOGGERS = []
+
+# Normalize counts to the 15 minute marker. This value MUST be less than 60. A
+# value of 0 would store counts for every minute, and is the lowest level of
+# accuracy provided.
+MINUTE_NORMALIZATION = 15
 
 ## The following settings refer to the built-in webserver
 

@@ -1,23 +1,34 @@
 # XXX: Import django-paging's template tags so we dont have to worry about
 #      INSTALLED_APPS
 from django import template
-from django.db.models import Count
-from django.utils.safestring import mark_safe
 from django.template import RequestContext
 from django.template.defaultfilters import stringfilter
 from django.template.loader import render_to_string
-from paging.helpers import paginate as paginate_func
-from sentry.utils import json
-from sentry.utils import get_db_engine
-from sentry.utils.compat.db import connections
+from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext as _
+from paging.helpers import paginate as paginate_func
 from sentry.plugins import GroupActionProvider
+from sentry.utils import json
 from templatetag_sugar.register import tag
 from templatetag_sugar.parser import Name, Variable, Constant, Optional
 
 import datetime
 
 register = template.Library()
+
+# seriously Django?
+@register.filter
+def plus(value, amount):
+    return int(value) + int(amount)
+
+@register.filter
+def has_charts(group):
+    from sentry.utils.charts import has_charts
+    if hasattr(group, '_state'):
+        db = group._state.db
+    else:
+        db = 'default'
+    return has_charts(db)
 
 @register.filter
 def as_sorted(value):
@@ -30,7 +41,7 @@ def is_dict(value):
 @register.filter
 def with_priority(result_list, key='score'):
     if result_list:
-        if isinstance(result_list[0], dict):
+        if isinstance(result_list[0], (dict, list, tuple)):
             _get = lambda x, k: x[k]
         else:
             _get = lambda x, k: getattr(x, k)
@@ -54,46 +65,6 @@ def with_priority(result_list, key='score'):
 @register.filter
 def num_digits(value):
     return len(str(value))
-
-@register.filter
-def chart_data(group, max_days=90):
-    hours = max_days*24
-
-    today = datetime.datetime.now().replace(microsecond=0, second=0, minute=0)
-    min_date = today - datetime.timedelta(hours=hours)
-
-    if hasattr(group, '_state'):
-        db = group._state.db
-    else:
-        db = 'default'
-
-    conn = connections[db]
-
-    if get_db_engine(getattr(conn, 'alias', 'default')).startswith('oracle'):
-        method = conn.ops.date_trunc_sql('hh24', 'datetime')
-    else:
-        method = conn.ops.date_trunc_sql('hour', 'datetime')
-
-    chart_qs = list(group.message_set.all()\
-                      .filter(datetime__gte=min_date)\
-                      .extra(select={'grouper': method}).values('grouper')\
-                      .annotate(num=Count('id')).values_list('grouper', 'num')\
-                      .order_by('grouper'))
-
-    if not chart_qs:
-        return {}
-
-    rows = dict(chart_qs)
-
-    #just skip zeroes
-    first_seen = hours
-    while not rows.get(today - datetime.timedelta(hours=first_seen)) and first_seen > 24:
-        first_seen -= 1
-
-    return {
-        'points': [rows.get(today-datetime.timedelta(hours=d), 0) for d in xrange(first_seen, -1, -1)],
-        'categories': [str(today-datetime.timedelta(hours=d)) for d in xrange(first_seen, -1, -1)],
-    }
 
 @register.filter
 def to_json(data):
