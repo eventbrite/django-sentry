@@ -1,3 +1,32 @@
+1.12.0
+
+* Adjusted message_id to include the checksum to avoid situations were the message_id
+  that was generated did not exist due to sampling.
+
+1.11.4
+
+* Several design improvements for group/message details panes.
+
+1.11.3
+
+* Fixed a bug that was causing exception summary to not show.
+
+1.11.2
+
+* Cleaned up message and group details pages (adding back some missing information).
+* Cleaned up some design around odd margins/padding.
+
+1.11.1
+
+* Fixed a bug that would cause the admin (and potentially other modules) to get loaded multiple times.
+
+1.11.0
+
+* Added license headers.
+* Removed ``sentry.helpers`` and ``sentry.routers``.
+* Global module versions are now cached to avoid continuous path walking and
+  import overhead.
+
 1.10.1
 
 * Fixed an issue that was causing servers to show logger names.
@@ -129,7 +158,7 @@
 * All strings, lists, tuples, and sets are now shortened before sending
   to the server. Iterable data structures are truncated to the first
   50 items, and strings are truncated to the first 200 characters.
-  
+
   Both shorteners have configurable values in the settings.
 
 1.7.1

@@ -1,7 +1,14 @@
+"""
+sentry.conf.settings
+~~~~~~~~~~~~~~~~~~~~
+
+:copyright: (c) 2010 by the Sentry Team, see AUTHORS for more details.
+:license: BSD, see LICENSE for more details.
+"""
+
 from sentry.conf.defaults import *
 
 from django.conf import settings
-from django.core.urlresolvers import resolve
 from django.utils.hashcompat import md5_constructor
 from django.utils.translation import ugettext_lazy as _
 
@@ -25,14 +32,6 @@ if REMOTE_URL:
         REMOTE_URL = [REMOTE_URL]
     elif not isinstance(REMOTE_URL, (list, tuple)):
         raise ValueError("Sentry setting 'REMOTE_URL' must be of type list.")
-
-# if LOGIN_URL resolves force login_required to it instead of our own
-try:
-    resolve(settings.LOGIN_URL)
-except:
-    pass
-else:
-    LOGIN_URL = settings.LOGIN_URL
 
 def configure(**kwargs):
     for k, v in kwargs.iteritems():

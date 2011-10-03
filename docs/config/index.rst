@@ -5,7 +5,7 @@ This document describes additional configuration options available to Sentry.
 
 .. note:: While these are prefixed with ``SENTRY_`` in your ``settings.py``, if you were to configure or reference them via
           Sentry's internal tools the prefix would be dropped.
-          
+
           For example, ``SENTRY_PUBLIC`` would be ``sentry.conf.settings.PUBLIC``.
 
 
@@ -23,6 +23,15 @@ Django 1.3
     LOGGING = {
         'version': 1,
         'disable_existing_loggers': True,
+        'root': {
+            'level': 'WARNING',
+            'handlers': ['sentry'],
+        },
+        'formatters': {
+            'verbose': {
+                'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
+            },
+        },
         'handlers': {
             'sentry': {
                 'level': 'DEBUG',
@@ -36,10 +45,6 @@ Django 1.3
             }
         },
         'loggers': {
-            '()': {
-                'level': 'WARNING',
-                'handlers': ['sentry'],
-            },
             'sentry.errors': {
                 'level': 'DEBUG',
                 'handlers': ['console'],
@@ -98,8 +103,8 @@ your ``extra`` clause::
 	    }
 	})
 
-.. note:: The ``url`` and ``__sentry__`` keys are used internally by Sentry within the extra data.
-.. note:: Any key prefixed with ``_`` will not automatically output on the Sentry details view.
+.. note:: The ``url`` and ``view`` keys are used internally by Sentry within the extra data.
+.. note:: Any key (in ``data``) prefixed with ``_`` will not automatically output on the Sentry details view.
 
 Sentry will intelligently group messages if you use proper string formatting. For example, the following messages would
 be seen as the same message within Sentry::
@@ -114,18 +119,20 @@ logging an exception. This can be done automatically with the ``SENTRY_AUTO_LOG_
 
 	logger.error('There was an error', extra={'stack': True})
 
-.. note:: We are describing a client/server interaction where
-both components are provided by django-sentry.  Other languages that
-provide a logging package that is comparable to the python ``logging``
-package may define a sentry handler.  Check the Integration with
-Sentry `Integration with Sentry <technical.html#integration-with-sentry>`_ paragraph.
+.. note::
+
+    We are describing a client/server interaction where
+    both components are provided by django-sentry.  Other languages that
+    provide a logging package that is comparable to the python ``logging``
+    package may define a sentry handler.  Check the:ref:`Extending Sentry <extending-sentry>`
+    documentation.
 
 Integration with ``haystack`` (Search)
 --------------------------------------
 
 (This support is still under development)
 
-Note: You will need to install a forked version of Haystack which supports additional configuration. It can be obtained on `GitHub <http://github.com/disqus/django-haystack>`.
+Note: You will need to install a forked version of Haystack which supports additional configuration. It can be obtained on `GitHub <http://github.com/disqus/django-haystack>`_.
 
 Start by configuring your Sentry search backend::
 
@@ -179,19 +186,19 @@ Sentry supports sending a message ID to your clients so that they can be tracked
 Another alternative method is rendering it within a template. By default, Sentry will attach request.sentry when it catches a Django exception. In our example, we will use this information to modify the default 500.html which is rendered, and show the user a case reference ID. The first step in doing this is creating a custom ``handler500`` in your ``urls.py`` file::
 
 	from django.conf.urls.defaults import *
-	
+
 	from django.views.defaults import page_not_found, server_error
-	
+
 	def handler500(request):
 	    """
 	    500 error handler which includes ``request`` in the context.
-	
+
 	    Templates: `500.html`
 	    Context: None
 	    """
 	    from django.template import Context, loader
 	    from django.http import HttpResponseServerError
-	
+
 	    t = loader.get_template('500.html') # You need to create a 500.html template.
 	    return HttpResponseServerError(t.render(Context({
 	        'request': request,
@@ -240,7 +247,7 @@ name (defaults to ``sentry``).
 ::
 
 	SENTRY_CLIENT = 'sentry.client.celery.CelerySentryClient'
-	
+
 	INSTALLED_APPS = (
 	    ...,
 	    'sentry.client.celery',
