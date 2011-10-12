@@ -34,8 +34,8 @@ try:
     from common.utils.redact import redact_query_dict, redact_cookies, \
                                     redact_meta, redact_uri
 except ImportError:
-    def donothing(*args):
-        return args
+    def donothing(arg):
+        return arg
     redact_query_dict = redact_cookies = redact_meta = redact_uri = donothing
 
 logger = logging.getLogger('sentry.errors')
