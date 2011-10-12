@@ -22,7 +22,6 @@ from django.core.cache import cache
 from django.http import HttpRequest
 from django.template import TemplateSyntaxError
 from django.template.loader import LoaderOrigin
-from common.utils.redact import redact_query_dict, redact_cookies, redact_meta, redact_uri
 
 import sentry
 from sentry.conf import settings
@@ -30,6 +29,14 @@ from sentry.utils import json
 from sentry.utils import construct_checksum, transform, get_installed_apps, force_unicode, \
                            get_versions, shorten, get_signature, get_auth_header, varmap
 from sentry.utils.stacks import get_stack_info, iter_stack_frames, iter_traceback_frames
+
+try:
+    from common.utils.redact import redact_query_dict, redact_cookies, \
+                                    redact_meta, redact_uri
+except ImportError:
+    def donothing(*args):
+        return args
+    redact_query_dict = redact_cookies = redact_meta = redact_uri = donothing
 
 logger = logging.getLogger('sentry.errors')
 
