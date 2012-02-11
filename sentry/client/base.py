@@ -32,11 +32,11 @@ from sentry.utils.stacks import get_stack_info, iter_stack_frames, iter_tracebac
 
 try:
     from common.utils.redact import redact_query_dict, redact_cookies, \
-                                    redact_meta, redact_uri
+                                    redact_meta, redact_uri, redact_local_vars
 except ImportError:
     def donothing(arg):
         return arg
-    redact_query_dict = redact_cookies = redact_meta = redact_uri = donothing
+    redact_query_dict = redact_cookies = redact_meta = redact_uri = redact_local_vars = donothing
 
 logger = logging.getLogger('sentry.errors')
 
@@ -357,6 +357,10 @@ class SentryClient(object):
             exc_type, exc_value, exc_traceback = exc_info
 
             frames = varmap(shorten, get_stack_info(iter_traceback_frames(exc_traceback)))
+
+            for f in frames:
+                for v in f.get('vars', []):
+                    (v[0], v[1]) = redact_local_vars(v[0], v[1])
 
             if hasattr(exc_type, '__class__'):
                 exc_module = exc_type.__class__.__module__
