@@ -27,6 +27,17 @@ from django.utils.hashcompat import md5_constructor, sha_constructor
 import sentry
 from sentry.conf import settings
 
+try:
+    from common.utils.redact import redact_query_dict, redact_cookies, \
+                                    redact_meta, redact_uri, redact_local_vars
+except ImportError:
+    def donothing(a=None, *args):
+        if not args:
+            return a
+        return (a,  ) + args
+
+    redact_query_dict = redact_cookies = redact_meta = redact_uri = redact_local_vars = donothing
+
 _FILTER_CACHE = None
 def get_filters():
     global _FILTER_CACHE
@@ -124,7 +135,8 @@ def transform(value, stack=[], context=None):
     elif isinstance(value, uuid.UUID):
         ret = repr(value)
     elif isinstance(value, dict):
-        ret = dict((str(k), transform_rec(v)) for k, v in value.iteritems())
+        d = dict([(str(k), redact_key(settings.WIPE_PARAMS, k, v)) for k, v in value.iteritems()])
+        ret = dict((str(k), transform_rec(v)) for k, v in d.iteritems())
     elif isinstance(value, unicode):
         ret = to_unicode(value)
     elif isinstance(value, str):
