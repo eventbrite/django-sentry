@@ -28,7 +28,7 @@ import sentry
 from sentry.conf import settings
 
 try:
-    from common.utils.redact import redact_query_dict, redact_cookies, \
+    from common.utils.redact import redact_query_dict, redact_cookies, redact_key, \
                                     redact_meta, redact_uri, redact_local_vars
 except ImportError:
     def donothing(a=None, *args):
@@ -36,7 +36,7 @@ except ImportError:
             return a
         return (a,  ) + args
 
-    redact_query_dict = redact_cookies = redact_meta = redact_uri = redact_local_vars = donothing
+    redact_query_dict = redact_cookies = redact_key = redact_meta = redact_uri = redact_local_vars = donothing
 
 _FILTER_CACHE = None
 def get_filters():
