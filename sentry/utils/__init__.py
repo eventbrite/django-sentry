@@ -135,7 +135,7 @@ def transform(value, stack=[], context=None):
     elif isinstance(value, uuid.UUID):
         ret = repr(value)
     elif isinstance(value, dict):
-        d = dict([(str(k), redact_key(settings.WIPE_PARAMS, k, v)) for k, v in value.iteritems()])
+        d = dict([(str(k), redact_key(django_settings.WIPE_PARAMS, k, v)) for k, v in value.iteritems()])
         ret = dict((str(k), transform_rec(v)) for k, v in d.iteritems())
     elif isinstance(value, unicode):
         ret = to_unicode(value)
