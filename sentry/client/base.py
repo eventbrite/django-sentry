@@ -305,7 +305,6 @@ class SentryClient(object):
         
         # save the message with included formatting
         kwargs['message'] = record.getMessage()
-        
         # If there's no exception being processed, exc_info may be a 3-tuple of None
         # http://docs.python.org/library/sys.html#sys.exc_info
         if record.exc_info and all(record.exc_info):
@@ -329,7 +328,12 @@ class SentryClient(object):
                     else:
                         continue
                 stack.append(frame)
-            data['__sentry__']['frames'] = varmap(shorten, get_stack_info(stack))
+            frames = varmap(shorten, get_stack_info(stack))
+            for f in frames:
+                for v in f.get('vars', []):
+                    (v[0], v[1]) = redact_local_vars(v[0], v[1])
+
+            data['__sentry__']['frames'] = frames
 
         return self.process(
             traceback=record.exc_text,
