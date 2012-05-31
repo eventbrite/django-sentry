@@ -1,364 +1,319 @@
 Configuration
 =============
 
-This document describes additional configuration options available to Sentry.
+This document describes additional configuration options available to the Sentry server. If you are looking for documentation for the client, it is maintained in the `Raven <http://github.com/dcramer/raven>`_ project.
 
-.. note:: While these are prefixed with ``SENTRY_`` in your ``settings.py``, if you were to configure or reference them via
-          Sentry's internal tools the prefix would be dropped.
+.. note:: While the options below are labeled without the ``SENTRY_`` prefix, when you are configuring them via your ``settings.py`` you **must* specify the prefix.
 
-          For example, ``SENTRY_PUBLIC`` would be ``sentry.conf.settings.PUBLIC``.
+.. data:: sentry.conf.KEY
+    :noindex:
 
+    The shared secret for global administration privileges via the API.
 
-Integration with ``logging``
-----------------------------
+    We recommend using Project API keys to maintain access, as using a shared key provides a potential security risk.
 
-Sentry supports the ability to directly tie into the ``logging`` module. To use it simply add ``SentryHandler`` to your logger.
+    ::
 
+    	SENTRY_KEY = '0123456789abcde'
 
-Django 1.3
-~~~~~~~~~~
+.. data:: sentry.conf.URL_PREFIX
+    :noindex:
 
-::
+	Absolute URL to the sentry root directory. Should not include a trailing slash.
 
-    LOGGING = {
-        'version': 1,
-        'disable_existing_loggers': True,
-        'root': {
-            'level': 'WARNING',
-            'handlers': ['sentry'],
-        },
-        'formatters': {
-            'verbose': {
-                'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
-            },
-        },
-        'handlers': {
-            'sentry': {
-                'level': 'DEBUG',
-                'class': 'sentry.client.handlers.SentryHandler',
-                'formatter': 'verbose'
-            },
-            'console': {
-                'level': 'DEBUG',
-                'class': 'logging.StreamHandler',
-                'formatter': 'verbose'
-            }
-        },
-        'loggers': {
-            'sentry.errors': {
-                'level': 'DEBUG',
-                'handlers': ['console'],
-                'propagate': False,
-            },
-        },
-    }
+	Defaults to ``""``.
 
+	::
 
-Older Versions
-~~~~~~~~~~~~~~
+		SENTRY_URL_PREFIX = '/sentry'
 
-::
+.. data:: sentry.conf.SAMPLE_DATA
+    :noindex:
 
-    import logging
-    from sentry.client.handlers import SentryHandler
+	.. versionadded:: 1.10.0
 
-    logger = logging.getLogger()
-    # ensure we havent already registered the handler
-    if SentryHandler not in map(type, logger.handlers):
-        logger.addHandler(SentryHandler())
+	Controls sampling of data.
 
-        # Add StreamHandler to sentry's default so you can catch missed exceptions
-        logger = logging.getLogger('sentry.errors')
-        logger.propagate = False
-        logger.addHandler(logging.StreamHandler())
+	Defaults to ``True``.
 
+	If this is enabled, data will be sampled in a manner similar to the following:
 
-Usage
-~~~~~
+	* 50 messages stores ~50 results
+	* 1000 messages stores ~400 results
+	* 10000 messages stores ~900 results
+	* 100000 messages stores ~1800 results
+	* 1000000 messages stores ~3600 results
+	* 10000000 messages stores ~4500 results
 
-A recommended pattern in logging is to simply reference the modules name for each logger, so for example, you might at the top of your module define the following::
+	::
 
-    import logging
-    logger = logging.getLogger(__name__)
+		SENTRY_SAMPLE_DATA = False
 
-You can also use the ``exc_info`` and ``extra=dict(url=foo)`` arguments on your ``log`` methods. This will store the appropriate information and allow django-sentry to render it based on that information::
+.. data:: sentry.conf.FILTERS
+    :noindex:
 
-	logger.error('There was some crazy error', exc_info=True, extra={'url': request.build_absolute_uri()})
+    A list of filters for extending the Sentry interface (as well as post-processing of data).
 
-You may also pass additional information to be stored as meta information with the event. As long as the key
-name is not reserved and not private (_foo) it will be displayed on the Sentry dashboard. To do this, pass it as ``data`` within
-your ``extra`` clause::
+    ::
 
-	logger.error('There was some crazy error', exc_info=True, extra={
-	    # Optionally pass a request and we'll grab any information we can
-	    'request': request,
+		SENTRY_FILTERS = (
+		    'sentry.filters.StatusFilter',
+		    'sentry.filters.LoggerFilter',
+		    'sentry.filters.LevelFilter',
+		    'sentry.filters.ServerNameFilter',
+		    'sentry.filters.SiteFilter',
+		)
 
-	    # Otherwise you can pass additional arguments to specify request info
-	    'view': 'my.view.name',
-	    'url': request.build_absolute_url(),
+.. data:: sentry.conf.VIEWS
+    :noindex:
 
-	    'data': {
-	        # You may specify any values here and Sentry will log and output them
-	        'username': request.user.username
-	    }
-	})
+    A list of views for enhancing the event aggregation dashboard.
 
-.. note:: The ``url`` and ``view`` keys are used internally by Sentry within the extra data.
-.. note:: Any key (in ``data``) prefixed with ``_`` will not automatically output on the Sentry details view.
+    ::
 
-Sentry will intelligently group messages if you use proper string formatting. For example, the following messages would
-be seen as the same message within Sentry::
+        SENTRY_VIEWS = (
+            'sentry.views.Exception',
+            'sentry.views.Message',
+            'sentry.views.Query',
+        )
 
-	logger.error('There was some %s error', 'crazy')
-	logger.error('There was some %s error', 'fun')
-	logger.error('There was some %s error', 1)
+.. data:: sentry.conf.LOG_LEVELS
+    :noindex:
 
-As of Sentry 1.10.0 the ``logging`` integration also allows easy capture of stack frames (and their locals) as if you were
-logging an exception. This can be done automatically with the ``SENTRY_AUTO_LOG_STACKS`` setting, as well as by passing the
-``stack`` boolean to ``extra``::
+    A list of log levels, with their numeric value, as well as their short name.
 
-	logger.error('There was an error', extra={'stack': True})
+    ::
 
-.. note::
+        LOG_LEVELS = (
+            (logging.DEBUG, 'debug'),
+            (logging.INFO, 'info'),
+            (logging.WARNING, 'warning'),
+            (logging.ERROR, 'error'),
+            (logging.FATAL, 'fatal'),
+        )
 
-    We are describing a client/server interaction where
-    both components are provided by django-sentry.  Other languages that
-    provide a logging package that is comparable to the python ``logging``
-    package may define a sentry handler.  Check the:ref:`Extending Sentry <extending-sentry>`
-    documentation.
-
-Integration with ``haystack`` (Search)
---------------------------------------
-
-(This support is still under development)
-
-Note: You will need to install a forked version of Haystack which supports additional configuration. It can be obtained on `GitHub <http://github.com/disqus/django-haystack>`_.
-
-Start by configuring your Sentry search backend::
-
-	SENTRY_SEARCH_ENGINE = 'solr'
-	SENTRY_SEARCH_OPTIONS = {
-	    'url': 'http://127.0.0.1:8983/solr'
-	}
-
-Or if you want to use Whoosh (you shouldn't)::
-
-	SENTRY_SEARCH_ENGINE = 'whoosh'
-	SENTRY_SEARCH_OPTIONS = {
-	    'path': os.path.join(PROJECT_ROOT, 'sentry_index')
-	}
-
-Now ensure you've added ``haystack`` to the ``INSTALLED_APPS`` on Sentry's server::
-
-	INSTALLED_APPS = INSTALLED_APPS + ('haystack',)
-
-When calling Haystack's Django management commands, you'll need to identify Sentry to Haystack by explicitly including the ``--site`` parameter::
-
-	python manage.py build_solr_schema --site=sentry.search_indexes.site
-
-Enjoy!
-
-404 Logging
------------
-
-.. versionadded:: 1.6.0
-
-In certain conditions you may wish to log 404 events to the Sentry server. To do this, you simply need to enable a Django middleware::
-
-	MIDDLEWARE_CLASSES = MIDDLEWARE_CLASSES + (
-	  ...,
-	  'sentry.client.middleware.Sentry404CatchMiddleware',
-	)
-
-Message References
-------------------
-
-.. versionadded:: 1.6.0
-
-Sentry supports sending a message ID to your clients so that they can be tracked easily by your development team. There are two ways to access this information, the first is via the ``X-Sentry-ID`` HTTP response header. Adding this is as simple as appending a middleware to your stack::
-
-	MIDDLEWARE_CLASSES = MIDDLEWARE_CLASSES + (
-	  # We recommend putting this as high in the chain as possible
-	  'sentry.client.middleware.SentryResponseErrorIdMiddleware',
-	  ...,
-	)
-
-Another alternative method is rendering it within a template. By default, Sentry will attach request.sentry when it catches a Django exception. In our example, we will use this information to modify the default 500.html which is rendered, and show the user a case reference ID. The first step in doing this is creating a custom ``handler500`` in your ``urls.py`` file::
-
-	from django.conf.urls.defaults import *
-
-	from django.views.defaults import page_not_found, server_error
-
-	def handler500(request):
-	    """
-	    500 error handler which includes ``request`` in the context.
-
-	    Templates: `500.html`
-	    Context: None
-	    """
-	    from django.template import Context, loader
-	    from django.http import HttpResponseServerError
-
-	    t = loader.get_template('500.html') # You need to create a 500.html template.
-	    return HttpResponseServerError(t.render(Context({
-	        'request': request,
-	    })))
-
-Once we've successfully added the request context variable, adding the Sentry reference ID to our 500.html is simple::
-
-	<p>You've encountered an error, oh noes!</p>
-	{% if request.sentry.id %}
-	    <p>If you need assistance, you may reference this error as <strong>{{ request.sentry.id }}</strong>.</p>
-	{% endif %}
-
-Other Settings
+Authentication
 --------------
 
-Several options exist to configure django-sentry via your ``settings.py``:
+.. data:: sentry.conf.PUBLIC
+    :noindex:
 
-SENTRY_CLIENT
-~~~~~~~~~~~~~~
+    Should Sentry be protected by a username and password (using @login_required) or be publicly accessible.
 
-In some situations you may wish for a slightly different behavior to how Sentry communicates with your server. For
-this, Sentry allows you to specify a custom client::
+    Defaults to ``False`` (password protection).
 
-	SENTRY_CLIENT = 'sentry.client.base.SentryClient'
+    ::
 
-In addition to the default client (which will handle multi-db and REMOTE_URL for you) we also include two additional options:
+        SENTRY_PUBLIC = True
 
-LoggingSentryClient
-*******************
+.. data:: sentry.conf.ALLOW_PROJECT_CREATION
+    :noindex:
 
-Pipes all Sentry errors to a named logger: ``sentry``. If you wish to use Sentry in a strictly client based logging mode
-this would be the way to do it.
+    Should sentry allow users without the 'sentry.add_project' permission to
+    create new projects?
 
-::
+    Defaults to ``False`` (require permission).
 
-	SENTRY_CLIENT = 'sentry.client.log.LoggingSentryClient'
+    ::
 
-CelerySentryClient
-******************
+        SENTRY_ALLOW_PROJECT_CREATION = True
 
-Integrates with the Celery message queue (http://celeryproject.org/). To use this you will also need to add ``sentry.client.celery`` to ``INSTALLED_APPS`` for ``tasks.py`` auto discovery.
+.. data:: sentry.conf.ALLOW_ORIGIN
+    :noindex:
 
-You may also specify ``CELERY_ROUTING_KEY`` to change the task queue
-name (defaults to ``sentry``).
+    If provided, Sentry will set the Access-Control-Allow-Origin header to this
+    value on /api/store/ responses. In addition, the
+    Access-Control-Allow-Headers header will be set to 'X-Sentry-Auth'. This
+    allows JavaScript clients to submit cross-domain error reports.
 
-::
+    You can read more about these headers in the `Mozilla developer docs`_.
 
-	SENTRY_CLIENT = 'sentry.client.celery.CelerySentryClient'
+    Defaults to ``None`` (don't add the Access-Control headers)
 
-	INSTALLED_APPS = (
-	    ...,
-	    'sentry.client.celery',
-	)
+    ::
 
-AsyncSentryClient
-*****************
+        SENTRY_ALLOW_ORIGIN = "http://foo.example"
 
-Spawns a background thread within the process that will handle sending messages upstream.
+.. _Mozilla developer docs: https://developer.mozilla.org/En/HTTP_access_control#Simple_requests
 
-::
+.. data:: sentry.conf.USE_JS_CLIENT
+    :noindex:
 
-	SENTRY_CLIENT = 'sentry.client.async.AsyncSentryClient'
+    Instructs Sentry to install it's JavaScript error handler to catch internal errors in the
+    Sentry client-side code.
 
-SENTRY_ADMINS
-~~~~~~~~~~~~~
+    Defaults to ``False``.
 
-On smaller sites you may wish to enable throttled emails, we recommend doing this by first
-removing the ``ADMINS`` setting in Django, and adding in ``SENTRY_ADMINS``::
+    ::
 
-	ADMINS = ()
-	SENTRY_ADMINS = ('root@localhost',)
+        SENTRY_USE_JS_CLIENT = True
 
-This will send out a notification the first time an error is seen, and the first time an error is
-seen after it has been resolved.
 
-SENTRY_MAIL_LEVEL
-~~~~~~~~~~~~~~~~~
+Notifications
+-------------
 
-.. versionadded:: 1.10.0
+As of the current release, Sentry now designates its notification processing to plugins. Specifically, the email
+notifications have been moved to the ``sentry.plugins.sentry_mail``. You'll need to add this plugin to your
+``INSTALLED_APPS`` if you wish to continue using email notifications.
 
-The threshold level to restrict emails to. Defaults to ``logging.DEBUG``.
+The following settings now act as default values for the ``sentry_mail`` plugin, and can be overwritten per-project
+by visiting the plugin configuration page for that project.
 
-SENTRY_MAIL_INCLUDE_LOGGERS
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. data:: sentry.conf.ADMINS
+    :noindex:
 
-.. versionadded:: 1.10.0
+    A list of email address to send notification emails to.
 
-An explicit list of all logger names to restrict emails to. Defaults to ``None``, which
-translates to "all loggers".
+    Defaults to ``[]``.
 
-SENTRY_MAIL_EXCLUDE_LOGGERS
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	On smaller sites you may wish to enable throttled emails, we recommend doing this by first
+	removing the ``ADMINS`` setting in Django, and adding in ``SENTRY_ADMINS``::
 
-.. versionadded:: 1.10.0
+		# Disable the default admins (for email)
+		ADMINS = ()
+		# Set Sentry's ADMINS to a raw list of email addresses
+		SENTRY_ADMINS = ('root@localhost',)
 
-An explicit list of all logger names to exclude from emails. Defaults to ``[]``.
+	This will send out a notification the first time an error is seen, and the first time an error is
+	seen after it has been resolved.
 
-SENTRY_TESTING
-~~~~~~~~~~~~~~
+.. data:: sentry.conf.MAIL_LEVEL
+    :noindex:
 
-Enabling this setting allows the testing of Sentry exception handler even if Django ``DEBUG`` is enabled.
+	.. versionadded:: 1.10.0
 
-Default value is ``False``
+	The threshold level to restrict emails to.
 
-.. note:: Normally when Django DEBUG is enabled the Sentry exception handler is immediately skipped
+	Defaults to ``logging.DEBUG``.
 
-SENTRY_NAME
-~~~~~~~~~~~
+	::
 
-This will override the ``server_name`` value for this installation. Defaults to ``socket.gethostname()``.
+		SENTRY_MAIL_LEVEL = logging.DEBUG
 
-SENTRY_URL_PREFIX
-~~~~~~~~~~~~~~~~~
+.. data:: sentry.conf.MAIL_INCLUDE_LOGGERS
+    :noindex:
 
-Absolute URL to the sentry root directory. Should not include a trailing slash. Defaults to ``""``.
+	.. versionadded:: 1.10.0
 
-SENTRY_EXCLUDE_PATHS
-~~~~~~~~~~~~~~~~~~~~
+	An explicit list of all logger names to restrict emails to.
 
-Extending this allow you to ignore module prefixes when we attempt to discover which function an error comes from (typically a view)
+	Defaults to ``None``, which means to "all loggers".
 
-SENTRY_INCLUDE_PATHS
-~~~~~~~~~~~~~~~~~~~~
+	::
 
-By default Sentry only looks at modules in INSTALLED_APPS for drilling down where an exception is located
+		SENTRY_MAIL_INCLUDE_LOGGERS = (
+		  'my.custom.logger.name',
+		)
 
-SENTRY_MAX_LENGTH_LIST
-~~~~~~~~~~~~~~~~~~~~~~
+.. data:: sentry.conf.MAIL_EXCLUDE_LOGGERS
+    :noindex:
 
-The maximum number of items a list-like container should store. Defaults to ``50``.
+	.. versionadded:: 1.10.0
 
-SENTRY_MAX_LENGTH_STRING
-~~~~~~~~~~~~~~~~~~~~~~~~
+	An explicit list of all logger names to exclude from emails.
 
-The maximum characters of a string that should be stored. Defaults to ``200``.
+	Defaults to ``[]``.
 
-SENTRY_PUBLIC
-~~~~~~~~~~~~~
+	::
 
-Should Sentry be protected by a username and password (using @login_required) or be publicly accessible. Defaults to ``False`` (password protection).
+		SENTRY_MAIL_EXCLUDE_LOGGERS = (
+		  'some.annoying.logger',
+		)
 
-SENTRY_AUTO_LOG_STACKS
-~~~~~~~~~~~~~~~~~~~~~~
+.. data:: sentry.conf.EMAIL_SUBJECT_PREFIX
+    :noindex:
 
-.. versionadded:: 1.10.0
+	The prefix to apply to outgoing emails.
 
-Should Sentry automatically log frame stacks (including locals) for ``create_from_record`` (``logging``) calls as it would for exceptions. Defaults to ``False``.
+	Defaults to ``""``.
 
-SENTRY_SAMPLE_DATA
-~~~~~~~~~~~~~~~~~~
+	::
 
-.. versionadded:: 1.10.0
+		SENTRY_EMAIL_SUBJECT_PREFIX = '[Sentry] '
 
-Controls sampling of data. Defaults to ``True``.
 
-If this is enabled, data will be sampled in a manner similar to the following:
+.. data:: sentry.conf.SERVER_EMAIL
+    :noindex:
 
-* 50 messages stores ~50 results
-* 1000 messages stores ~400 results
-* 10000 messages stores ~900 results
-* 100000 messages stores ~1800 results
-* 1000000 messages stores ~3600 results
-* 10000000 messages stores ~4500 results
+	The reply-to email address for outgoing mail.
+
+	Defaults to ``root@localhost``.
+
+	::
+
+		SENTRY_SERVER_EMAIL = 'sentry@example.com'
+
+Services
+--------
+
+Web Server
+~~~~~~~~~~
+
+The following settings are available for the built-in webserver:
+
+.. data:: sentry.conf.WEB_HOST
+    :noindex:
+
+    The hostname which the webserver should bind to.
+
+    Defaults to ``localhost``.
+
+    ::
+
+        SENTRY_WEB_HOST = '0.0.0.0'  # bind to all addresses
+
+.. data:: sentry.conf.WEB_PORT
+    :noindex:
+
+    The port which the webserver should listen on.
+
+    Defaults to ``9000``.
+
+    ::
+
+        SENTRY_WEB_PORT = 9000
+
+
+.. data:: sentry.conf.WEB_OPTIONS
+    :noindex:
+
+    A dictionary of additional configuration options to pass to gunicorn.
+
+    Defaults to ``{}``.
+
+    ::
+
+        SENTRY_WEB_OPTIONS = {
+            'workers': 10,
+            'worker_class': 'gevent',
+        }
+
+
+.. _config-udp-server:
+
+UDP Server
+~~~~~~~~~~
+
+The following settings are available for the built-in UDP API server:
+
+.. data:: sentry.conf.UDP_HOST
+    :noindex:
+
+    The hostname which the udp server should bind to.
+
+    Defaults to ``localhost``.
+
+    ::
+
+        SENTRY_UDP_HOST = '0.0.0.0'  # bind to all addresses
+
+.. data:: sentry.conf.UDP_PORT
+    :noindex:
+
+    The port which the udp server should listen on.
+
+    Defaults to ``9001``.
+
+    ::
+
+        SENTRY_UDP_PORT = 9001

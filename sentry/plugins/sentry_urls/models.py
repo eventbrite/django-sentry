@@ -2,30 +2,38 @@
 sentry.plugins.sentry_urls.models
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2010 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2012 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+import sentry
 
-from django.shortcuts import render_to_response
-from django.template.loader import render_to_string
+from django.utils.translation import ugettext_lazy as _
 
-from sentry.plugins import GroupActionProvider
+from sentry.plugins import register
+from sentry.plugins.bases.tag import TagPlugin
 
-class ServerUrlsPanel(GroupActionProvider):
-    """Adds additional support for showing information about urls including:
-    
+
+class UrlsPlugin(TagPlugin):
+    """
+    Adds additional support for showing information about urls including:
+
     * A panel which shows all urls a message was seen on.
     * A sidebar module which shows the urls most actively seen on.
     """
-    
-    title = 'URLs'
+    slug = 'urls'
+    title = _('URLs')
+    version = sentry.VERSION
+    author = "Sentry Team"
+    author_url = "https://github.com/dcramer/sentry"
+    tag = 'url'
+    tag_label = _('URL')
 
-    def panels(self, request, panel_list, group):
-        panel_list.append((self.title, self.__class__.get_url(group.pk)))
-        return panel_list
+    def get_tag_values(self, event):
+        http = event.interfaces.get('sentry.interfaces.Http')
+        if not http:
+            return []
+        if not http.url:
+            return []
+        return [http.url]
 
-    def view(self, request, group):
-        return render_to_response('sentry/plugins/sentry_urls/index.html', locals())
-    
-    def widget(self, request, group):
-        return render_to_string('sentry/plugins/sentry_urls/widget.html', locals())
+register(UrlsPlugin)

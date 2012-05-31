@@ -4,38 +4,26 @@ sentry.conf.defaults
 
 Represents the default values for all Sentry settings.
 
-:copyright: (c) 2010 by the Sentry Team, see AUTHORS for more details.
+:copyright: (c) 2010-2012 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
 
 import logging
 import os
 import os.path
-import socket
 
-ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), os.pardir))
+MODULE_ROOT = os.path.dirname(__import__('sentry').__file__)
 
 # Allow local testing of Sentry even if DEBUG is enabled
 DEBUG = False
-
-DATABASE_USING = None
-
-THRASHING_TIMEOUT = 60
-THRASHING_LIMIT = 10
 
 FILTERS = (
     'sentry.filters.StatusFilter',
     'sentry.filters.LoggerFilter',
     'sentry.filters.LevelFilter',
-    'sentry.filters.ServerNameFilter',
-    'sentry.filters.SiteFilter',
 )
 
-# Sentry allows you to specify an alternative search backend for itself
-SEARCH_ENGINE = None
-SEARCH_OPTIONS = {}
-
-KEY = socket.gethostname() + '1304u13oafjadf0913j4'
+KEY = None
 
 LOG_LEVELS = (
     (logging.DEBUG, 'debug'),
@@ -45,42 +33,17 @@ LOG_LEVELS = (
     (logging.FATAL, 'fatal'),
 )
 
-# This should be the full URL to sentries store view
-REMOTE_URL = None
+DEFAULT_LOG_LEVEL = 'error'
 
-REMOTE_TIMEOUT = 5
+DEFAULT_LOGGER_NAME = 'root'
 
 ADMINS = []
-
-CLIENT = 'sentry.client.base.SentryClient'
-
-NAME = socket.gethostname()
-
-# We allow setting the site name either by explicitly setting it with the
-# SENTRY_SITE setting, or using the django.contrib.sites framework for
-# fetching the current site. Since we can't reliably query the database
-# from this module, the specific logic is within the SiteFilter
-SITE = None
-
-# Extending this allow you to ignore module prefixes when we attempt to
-# discover which function an error comes from (typically a view)
-EXCLUDE_PATHS = []
-
-# By default Sentry only looks at modules in INSTALLED_APPS for drilling down
-# where an exception is located
-INCLUDE_PATHS = []
 
 # Absolute URL to the sentry root directory. Should not include a trailing slash.
 URL_PREFIX = ''
 
 # Allow access to Sentry without authentication.
 PUBLIC = False
-
-# The maximum number of elements to store for a list-like structure.
-MAX_LENGTH_LIST = 50
-
-# The maximum length to store of a string-like structure.
-MAX_LENGTH_STRING = 200
 
 EMAIL_SUBJECT_PREFIX = ''
 
@@ -90,11 +53,30 @@ SERVER_EMAIL = 'root@localhost'
 
 LOGIN_URL = None
 
-# Automatically log frame stacks from all ``logging`` messages.
-AUTO_LOG_STACKS = False
+PROJECT = 1
 
 # Only store a portion of all messages per unique group.
 SAMPLE_DATA = True
+
+# The following values control the sampling rates
+SAMPLE_RATES = (
+    (50, 1),
+    (1000, 2),
+    (10000, 10),
+    (100000, 50),
+    (1000000, 300),
+    (10000000, 2000),
+)
+
+MAX_SAMPLE_RATE = 10000
+
+SAMPLE_TIMES = (
+    (3600, 1),
+    (360, 10),
+    (60, 60),
+)
+
+MAX_SAMPLE_TIME = 10000
 
 # Restrict emails to only ``messages >= this value``.
 MAIL_LEVEL = logging.DEBUG
@@ -110,9 +92,83 @@ MAIL_EXCLUDE_LOGGERS = []
 # accuracy provided.
 MINUTE_NORMALIZATION = 15
 
-## The following settings refer to the built-in webserver
+# The number of events to display per page
+MESSAGES_PER_PAGE = 15
 
+# Web Service
 WEB_HOST = 'localhost'
 WEB_PORT = 9000
-WEB_LOG_FILE = os.path.join(ROOT, 'sentry.log')
-WEB_PID_FILE = os.path.join(ROOT, 'sentry.pid')
+WEB_OPTIONS = {
+    'workers': 3,
+}
+
+# UDP Service
+UDP_HOST = 'localhost'
+UDP_PORT = 9001
+
+# Queue (Kombu)
+QUEUE = {
+    'transport': 'kombu.transport.django.Transport',
+}
+
+# List of event aggregation views
+VIEWS = (
+    'sentry.views.Exception',
+    'sentry.views.Message',
+    'sentry.views.Query',
+)
+
+# Should users without 'sentry.add_project' permissions be allowed
+# to create new projects
+ALLOW_PROJECT_CREATION = False
+
+# Should users without 'sentry.add_team' permissions be allowed
+# to create new projects
+ALLOW_TEAM_CREATION = False
+
+# Should users without superuser permissions be allowed to
+# make projects public
+ALLOW_PUBLIC_PROJECTS = True
+
+# Instructs Sentry to utilize it's queue for background jobs. You will
+# need to ensure that you have workers running if you enable the queue.
+
+# You can also set this to a list of fully qualified job names to only
+# selectively enable the queue:
+# USE_QUEUE = (
+#     'sentry.tasks.store.store_event',
+#     'sentry.tasks.cleanup.cleanup',
+#     'sentry.tasks.index.index_event',
+#     'sentry.tasks.post_process.post_process_group',
+#     'sentry.tasks.process_buffer.process_incr',
+# )
+USE_QUEUE = False
+
+# Instructs Sentry to utilize it's internal search indexer on all incoming
+# events..
+USE_SEARCH = True
+
+# Default sort option for the group stream
+DEFAULT_SORT_OPTION = 'date'
+
+# Default sort option for the search results
+SEARCH_DEFAULT_SORT_OPTION = 'date'
+
+# Default project access when a project owner is created
+DEFAULT_PROJECT_ACCESS = 'MEMBER_OWNER'
+
+# Default to not sending the Access-Control-Allow-Origin header on api/store
+ALLOW_ORIGIN = None
+
+# Enable capturing of JavaScript errors (Sentry internal errors)
+USE_JS_CLIENT = False
+
+# The alias for the cache backend (MUST be a compatible backend string for < 1.3)
+CACHE_BACKEND = 'dummy://'
+
+# The maximum number of events which can be requested as JSON
+MAX_JSON_RESULTS = 1000
+
+# Buffer backend to use
+BUFFER = 'sentry.buffer.Buffer'
+BUFFER_OPTIONS = {}

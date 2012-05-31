@@ -1,3 +1,6 @@
+.coverage
+.tox
+/cover
 /build
 /dist
 /*.egg-info
@@ -8,9 +11,6 @@
 *.pid
 pip-log.txt
 .DS_Store
-/example_project/local_settings.py
 /docs/html
 /docs/doctrees
-/sentry_index/
-/sentry_test_index
-/example_project/*.db
+example/db.sqlite
