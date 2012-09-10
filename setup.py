@@ -57,10 +57,10 @@ install_requires = [
     'django-picklefield>=0.2.0',
     'django-templatetag-sugar>=0.1.0',
     'gunicorn>=0.14.0',
-    'logan>=0.3.1',
+    'logan>=0.4.0',
     'pynliner>=0.4.0',
     'python-dateutil>=1.5.0,<2.0.0',
-    'raven>=2.0.3',
+    'raven>=2.0.5',
     'simplejson>=2.1.6',
     'South>=0.7.6',
     'httpagentparser>=1.0.5',
@@ -69,7 +69,7 @@ install_requires = [
 
 setup(
     name='sentry',
-    version='5.0.0-dev',
+    version='5.0.5',
     author='David Cramer',
     author_email='dcramer@gmail.com',
     url='http://www.getsentry.com',
